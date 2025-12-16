@@ -1,16 +1,19 @@
 import React, { useState } from 'react';
 import { View, StyleSheet, ScrollView, Alert, KeyboardAvoidingView, Platform, Text } from 'react-native';
-import { TextInput, Button, Card, Title, Paragraph, ActivityIndicator } from 'react-native-paper';
+import { TextInput, Button, Card, Title, Paragraph, ActivityIndicator, IconButton } from 'react-native-paper';
 import { createPayment } from '../services/paymentService';
+import { theme } from '../theme';
 
 const PaymentScreen = ({ route, navigation }) => {
   const customer = route?.params?.customer;
   const [accountNumber, setAccountNumber] = useState(customer?.account_number || '');
-  const [paymentAmount, setPaymentAmount] = useState(customer?.emi_due?.toString() || '');
+  const defaultAmount = customer?.remaining_emi && customer.remaining_emi > 0 
+    ? customer.remaining_emi 
+    : customer?.emi_due || '';
+  const [paymentAmount, setPaymentAmount] = useState(defaultAmount?.toString() || '');
   const [loading, setLoading] = useState(false);
 
   const handlePayment = async () => {
-    // Validation
     if (!accountNumber.trim()) {
       Alert.alert('Validation Error', 'Please enter your account number');
       return;
@@ -26,9 +29,16 @@ const PaymentScreen = ({ route, navigation }) => {
       const response = await createPayment(accountNumber.trim(), parseFloat(paymentAmount));
       
       if (response.success) {
+        const paymentData = response.data || {};
+        const message = response.message || `Payment of ₹${parseFloat(paymentAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} has been processed successfully.`;
+        
         Alert.alert(
-          'Payment Successful',
-          `Payment of ₹${parseFloat(paymentAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} has been processed successfully for account ${accountNumber}.`,
+          '✅ Payment Successful',
+          message + (paymentData.remaining_tenure !== undefined 
+            ? `\n\nRemaining Tenure: ${paymentData.remaining_tenure} months` 
+            : '') + (paymentData.next_emi_due !== undefined && paymentData.next_emi_due > 0
+            ? `\nNext EMI Due: ₹${paymentData.next_emi_due.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+            : ''),
           [
             {
               text: 'View History',
@@ -41,7 +51,15 @@ const PaymentScreen = ({ route, navigation }) => {
               onPress: () => {
                 setAccountNumber('');
                 setPaymentAmount('');
-                navigation.goBack();
+                // Navigate back and force refresh
+                // Use a small delay to ensure payment is processed
+                setTimeout(() => {
+                  if (navigation.canGoBack()) {
+                    navigation.goBack();
+                  } else {
+                    navigation.navigate('Home');
+                  }
+                }, 100);
               },
             },
           ]
@@ -60,46 +78,84 @@ const PaymentScreen = ({ route, navigation }) => {
     }
   };
 
+  const formatCurrency = (amount) => {
+    return `₹${parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+  };
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Card style={styles.card}>
+        <View style={styles.headerCard}>
+          <View style={styles.headerIcon}>
+            <Text style={styles.headerIconText}>💳</Text>
+          </View>
+          <Title style={styles.headerTitle}>Make Payment</Title>
+          <Paragraph style={styles.headerSubtitle}>
+            Enter your account details to proceed with payment
+          </Paragraph>
+        </View>
+
+        <Card style={styles.formCard} mode="elevated">
           <Card.Content>
-            <Title style={styles.title}>Payment Details</Title>
-            <Paragraph style={styles.subtitle}>
-              Enter your account number and payment amount to proceed
-            </Paragraph>
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Account Number</Text>
+              <TextInput
+                value={accountNumber}
+                onChangeText={setAccountNumber}
+                mode="outlined"
+                style={styles.input}
+                disabled={!!customer}
+                autoCapitalize="none"
+                outlineColor={theme.colors.border}
+                activeOutlineColor={theme.colors.primary}
+                left={<TextInput.Icon icon="account" iconColor={theme.colors.textSecondary} />}
+              />
+            </View>
 
-            <TextInput
-              label="Account Number"
-              value={accountNumber}
-              onChangeText={setAccountNumber}
-              mode="outlined"
-              style={styles.input}
-              disabled={!!customer}
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              label="Payment Amount (₹)"
-              value={paymentAmount}
-              onChangeText={setPaymentAmount}
-              mode="outlined"
-              style={styles.input}
-              keyboardType="numeric"
-              left={<TextInput.Affix text="₹" />}
-            />
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Payment Amount</Text>
+              <TextInput
+                value={paymentAmount}
+                onChangeText={setPaymentAmount}
+                mode="outlined"
+                style={styles.input}
+                keyboardType="numeric"
+                outlineColor={theme.colors.border}
+                activeOutlineColor={theme.colors.primary}
+                left={<TextInput.Icon icon="currency-inr" iconColor={theme.colors.textSecondary} />}
+              />
+            </View>
 
             {customer && (
               <Card style={styles.infoCard} mode="outlined">
-                <Card.Content>
-                  <Paragraph style={styles.infoText}>
-                    <Text style={styles.infoLabel}>EMI Due: </Text>
-                    ₹{parseFloat(customer.emi_due).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                  </Paragraph>
+                <Card.Content style={styles.infoCardContent}>
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>
+                      {customer.remaining_emi && customer.remaining_emi > 0 && customer.remaining_emi < customer.emi_due
+                        ? 'Remaining EMI:'
+                        : 'EMI Due:'}
+                    </Text>
+                    <Text style={styles.infoValue}>
+                      {formatCurrency(customer.remaining_emi && customer.remaining_emi > 0 ? customer.remaining_emi : customer.emi_due)}
+                    </Text>
+                  </View>
+                  {customer.remaining_emi && customer.remaining_emi > 0 && customer.remaining_emi < customer.emi_due && (
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Full EMI:</Text>
+                      <Text style={styles.infoValueSmall}>
+                        {formatCurrency(customer.emi_due)}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Remaining Tenure:</Text>
+                    <Text style={styles.infoValueSmall}>
+                      {customer.tenure} months
+                    </Text>
+                  </View>
                 </Card.Content>
               </Card>
             )}
@@ -107,11 +163,14 @@ const PaymentScreen = ({ route, navigation }) => {
             <Button
               mode="contained"
               onPress={handlePayment}
-              style={styles.button}
+              style={styles.submitButton}
+              contentStyle={styles.submitButtonContent}
+              labelStyle={styles.submitButtonLabel}
               loading={loading}
               disabled={loading}
+              icon="check-circle"
             >
-              {loading ? 'Processing...' : 'Submit Payment'}
+              {loading ? 'Processing Payment...' : 'Confirm Payment'}
             </Button>
           </Card.Content>
         </Card>
@@ -123,45 +182,105 @@ const PaymentScreen = ({ route, navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: theme.colors.background,
   },
   scrollContent: {
     padding: 16,
     flexGrow: 1,
   },
-  card: {
-    elevation: 4,
+  headerCard: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.borderRadius.lg,
+    padding: 24,
+    marginBottom: 16,
+    alignItems: 'center',
+    ...theme.shadows.md,
   },
-  title: {
-    fontSize: 24,
+  headerIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  headerIconText: {
+    fontSize: 32,
+  },
+  headerTitle: {
+    fontSize: 28,
     fontWeight: 'bold',
+    color: theme.colors.onPrimary,
     marginBottom: 8,
   },
-  subtitle: {
+  headerSubtitle: {
     fontSize: 14,
-    color: '#666',
+    color: theme.colors.onPrimary,
+    opacity: 0.9,
+    textAlign: 'center',
+  },
+  formCard: {
+    borderRadius: theme.borderRadius.lg,
+    ...theme.shadows.md,
+  },
+  inputContainer: {
     marginBottom: 20,
   },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: theme.colors.text,
+    marginBottom: 8,
+  },
   input: {
-    marginBottom: 16,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
+    fontSize: 16,
   },
   infoCard: {
     marginTop: 8,
-    marginBottom: 16,
-    backgroundColor: '#e3f2fd',
+    marginBottom: 24,
+    backgroundColor: theme.colors.backgroundSecondary,
+    borderColor: theme.colors.primaryLight,
+    borderRadius: theme.borderRadius.md,
   },
-  infoText: {
-    fontSize: 16,
+  infoCardContent: {
+    paddingVertical: 12,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   infoLabel: {
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '500',
+    color: theme.colors.text,
   },
-  button: {
+  infoValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: theme.colors.primary,
+  },
+  infoValueSmall: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.colors.text,
+  },
+  submitButton: {
     marginTop: 8,
-    paddingVertical: 8,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.primary,
+    ...theme.shadows.sm,
+  },
+  submitButtonContent: {
+    paddingVertical: 12,
+  },
+  submitButtonLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.colors.onPrimary,
   },
 });
 
 export default PaymentScreen;
-

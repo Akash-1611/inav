@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Generate App Assets</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #1E3A8A; }
+        .button {
+            background: #1E3A8A;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        .button:hover { background: #3B82F6; }
+        canvas { border: 1px solid #ddd; margin: 10px 0; }
+        .info { background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 15px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Generate App Assets</h1>
+        <div class="info">
+            <p><strong>Instructions:</strong></p>
+            <ol>
+                <li>Click "Generate Icon" to create a 1024x1024 icon</li>
+                <li>Click "Generate Splash" to create a 1242x2436 splash screen</li>
+                <li>Right-click each canvas and "Save Image As..."</li>
+                <li>Save to: <code>frontend/assets/</code> folder</li>
+            </ol>
+        </div>
+
+        <h3>App Icon (1024x1024)</h3>
+        <canvas id="iconCanvas" width="1024" height="1024"></canvas>
+        <br>
+        <button class="button" onclick="generateIcon()">Generate Icon</button>
+        <button class="button" onclick="downloadIcon()">Download Icon</button>
+
+        <h3>Splash Screen (1242x2436)</h3>
+        <canvas id="splashCanvas" width="1242" height="2436"></canvas>
+        <br>
+        <button class="button" onclick="generateSplash()">Generate Splash</button>
+        <button class="button" onclick="downloadSplash()">Download Splash</button>
+    </div>
+
+    <script>
+        function generateIcon() {
+            const canvas = document.getElementById('iconCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Background gradient
+            const gradient = ctx.createLinearGradient(0, 0, 1024, 1024);
+            gradient.addColorStop(0, '#1E3A8A');
+            gradient.addColorStop(1, '#3B82F6');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 1024, 1024);
+            
+            // Draw app icon (simple design)
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 300px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('💳', 512, 512);
+            
+            // Add text
+            ctx.font = 'bold 80px Arial';
+            ctx.fillText('Payment', 512, 650);
+        }
+
+        function generateSplash() {
+            const canvas = document.getElementById('splashCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Background
+            const gradient = ctx.createLinearGradient(0, 0, 1242, 2436);
+            gradient.addColorStop(0, '#1E3A8A');
+            gradient.addColorStop(1, '#3B82F6');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 1242, 2436);
+            
+            // App icon
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 400px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('💳', 621, 1000);
+            
+            // App name
+            ctx.font = 'bold 120px Arial';
+            ctx.fillText('Payment Collection', 621, 1200);
+            ctx.font = '60px Arial';
+            ctx.fillText('App', 621, 1300);
+        }
+
+        function downloadIcon() {
+            const canvas = document.getElementById('iconCanvas');
+            const link = document.createElement('a');
+            link.download = 'icon.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function downloadSplash() {
+            const canvas = document.getElementById('splashCanvas');
+            const link = document.createElement('a');
+            link.download = 'splash.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        // Generate on load
+        window.onload = function() {
+            generateIcon();
+            generateSplash();
+        };
+    </script>
+</body>
+</html>
+

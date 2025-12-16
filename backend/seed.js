@@ -14,9 +14,24 @@ const createTables = async () => {
         interest_rate DECIMAL(5, 2) NOT NULL,
         tenure INTEGER NOT NULL,
         emi_due DECIMAL(10, 2) NOT NULL,
+        remaining_emi DECIMAL(10, 2) DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+    
+    // Add remaining_emi column if it doesn't exist (for existing databases)
+    await query(`
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'customers' AND column_name = 'remaining_emi'
+        ) THEN
+          ALTER TABLE customers ADD COLUMN remaining_emi DECIMAL(10, 2) DEFAULT 0;
+          UPDATE customers SET remaining_emi = emi_due WHERE remaining_emi = 0 OR remaining_emi IS NULL;
+        END IF;
+      END $$;
     `);
 
     // Create payments table
@@ -54,9 +69,36 @@ const createTables = async () => {
         interest_rate DECIMAL(5, 2) NOT NULL,
         tenure INT NOT NULL,
         emi_due DECIMAL(10, 2) NOT NULL,
+        remaining_emi DECIMAL(10, 2) DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    
+    // Add remaining_emi column if it doesn't exist (for existing databases)
+    await query(`
+      SET @dbname = DATABASE();
+      SET @tablename = 'customers';
+      SET @columnname = 'remaining_emi';
+      SET @preparedStatement = (SELECT IF(
+        (
+          SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE
+            (table_name = @tablename)
+            AND (table_schema = @dbname)
+            AND (column_name = @columnname)
+        ) > 0,
+        'SELECT 1',
+        CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' DECIMAL(10, 2) DEFAULT 0')
+      ));
+      PREPARE alterIfNotExists FROM @preparedStatement;
+      EXECUTE alterIfNotExists;
+      DEALLOCATE PREPARE alterIfNotExists;
+    `);
+    
+    // Update existing records to set remaining_emi = emi_due
+    await query(`
+      UPDATE customers SET remaining_emi = emi_due WHERE remaining_emi = 0 OR remaining_emi IS NULL
     `);
 
     // Create payments table
@@ -142,16 +184,16 @@ const seedData = async () => {
   for (const customer of customers) {
     if (dbType === 'postgres') {
       await query(
-        `INSERT INTO customers (account_number, issue_date, interest_rate, tenure, emi_due) 
-         VALUES ($1, $2, $3, $4, $5) 
+        `INSERT INTO customers (account_number, issue_date, interest_rate, tenure, emi_due, remaining_emi) 
+         VALUES ($1, $2, $3, $4, $5, $5) 
          ON CONFLICT (account_number) DO NOTHING`,
         [customer.account_number, customer.issue_date, customer.interest_rate, customer.tenure, customer.emi_due]
       );
     } else {
       await query(
-        `INSERT IGNORE INTO customers (account_number, issue_date, interest_rate, tenure, emi_due) 
-         VALUES (?, ?, ?, ?, ?)`,
-        [customer.account_number, customer.issue_date, customer.interest_rate, customer.tenure, customer.emi_due]
+        `INSERT IGNORE INTO customers (account_number, issue_date, interest_rate, tenure, emi_due, remaining_emi) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [customer.account_number, customer.issue_date, customer.interest_rate, customer.tenure, customer.emi_due, customer.emi_due]
       );
     }
   }

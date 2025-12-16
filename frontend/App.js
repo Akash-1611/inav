@@ -20,11 +20,15 @@ export default function App() {
           screenOptions={{
             headerStyle: {
               backgroundColor: theme.colors.primary,
+              elevation: 0,
+              shadowOpacity: 0,
             },
-            headerTintColor: '#fff',
+            headerTintColor: theme.colors.onPrimary,
             headerTitleStyle: {
               fontWeight: 'bold',
+              fontSize: 20,
             },
+            headerShadowVisible: false,
           }}
         >
           <Stack.Screen 
