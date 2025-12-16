@@ -1,120 +1,236 @@
+require('dotenv').config();
 const { initDatabase, query } = require('./config/database');
 
 const createTables = async () => {
-  // Create customers table
-  await query(`
-    CREATE TABLE IF NOT EXISTS customers (
-      id SERIAL PRIMARY KEY,
-      account_number VARCHAR(50) UNIQUE NOT NULL,
-      issue_date DATE NOT NULL,
-      interest_rate DECIMAL(5, 2) NOT NULL,
-      tenure INTEGER NOT NULL,
-      emi_due DECIMAL(10, 2) NOT NULL,
-      remaining_emi DECIMAL(10, 2) DEFAULT 0,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+  const dbType = process.env.DB_TYPE || 'postgres';
 
-  // Ensure remaining_emi exists
-  await query(`
-    DO $$ 
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'customers' AND column_name = 'remaining_emi'
-      ) THEN
-        ALTER TABLE customers ADD COLUMN remaining_emi DECIMAL(10, 2) DEFAULT 0;
-        UPDATE customers SET remaining_emi = emi_due;
-      END IF;
-    END $$;
-  `);
+  if (dbType === 'postgres') {
+    // Create customers table
+    await query(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id SERIAL PRIMARY KEY,
+        account_number VARCHAR(50) UNIQUE NOT NULL,
+        issue_date DATE NOT NULL,
+        interest_rate DECIMAL(5, 2) NOT NULL,
+        tenure INTEGER NOT NULL,
+        emi_due DECIMAL(10, 2) NOT NULL,
+        remaining_emi DECIMAL(10, 2) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    // Add remaining_emi column if it doesn't exist (for existing databases)
+    await query(`
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'customers' AND column_name = 'remaining_emi'
+        ) THEN
+          ALTER TABLE customers ADD COLUMN remaining_emi DECIMAL(10, 2) DEFAULT 0;
+          UPDATE customers SET remaining_emi = emi_due WHERE remaining_emi = 0 OR remaining_emi IS NULL;
+        END IF;
+      END $$;
+    `);
 
-  // Create payments table
-  await query(`
-    CREATE TABLE IF NOT EXISTS payments (
-      id SERIAL PRIMARY KEY,
-      customer_id INTEGER NOT NULL,
-      payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      payment_amount DECIMAL(10, 2) NOT NULL,
-      status VARCHAR(20) DEFAULT 'completed',
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT fk_customer
-        FOREIGN KEY (customer_id)
-        REFERENCES customers(id)
-        ON DELETE CASCADE
-    )
-  `);
+    // Create payments table
+    await query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id SERIAL PRIMARY KEY,
+        customer_id INTEGER NOT NULL,
+        payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        payment_amount DECIMAL(10, 2) NOT NULL,
+        status VARCHAR(20) DEFAULT 'completed',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+      )
+    `);
 
-  // Indexes
-  await query(`
-    CREATE INDEX IF NOT EXISTS idx_customers_account_number
-    ON customers(account_number)
-  `);
+    // Create index on account_number for faster lookups
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_customers_account_number ON customers(account_number)
+    `);
 
-  await query(`
-    CREATE INDEX IF NOT EXISTS idx_payments_customer_id
-    ON payments(customer_id)
-  `);
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_payments_customer_id ON payments(customer_id)
+    `);
 
-  await query(`
-    CREATE INDEX IF NOT EXISTS idx_payments_payment_date
-    ON payments(payment_date)
-  `);
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_payments_payment_date ON payments(payment_date)
+    `);
+  } else if (dbType === 'mysql') {
+    // Create customers table
+    await query(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        account_number VARCHAR(50) UNIQUE NOT NULL,
+        issue_date DATE NOT NULL,
+        interest_rate DECIMAL(5, 2) NOT NULL,
+        tenure INT NOT NULL,
+        emi_due DECIMAL(10, 2) NOT NULL,
+        remaining_emi DECIMAL(10, 2) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    
+    // Add remaining_emi column if it doesn't exist (for existing databases)
+    await query(`
+      SET @dbname = DATABASE();
+      SET @tablename = 'customers';
+      SET @columnname = 'remaining_emi';
+      SET @preparedStatement = (SELECT IF(
+        (
+          SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE
+            (table_name = @tablename)
+            AND (table_schema = @dbname)
+            AND (column_name = @columnname)
+        ) > 0,
+        'SELECT 1',
+        CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' DECIMAL(10, 2) DEFAULT 0')
+      ));
+      PREPARE alterIfNotExists FROM @preparedStatement;
+      EXECUTE alterIfNotExists;
+      DEALLOCATE PREPARE alterIfNotExists;
+    `);
+    
+    // Update existing records to set remaining_emi = emi_due
+    await query(`
+      UPDATE customers SET remaining_emi = emi_due WHERE remaining_emi = 0 OR remaining_emi IS NULL
+    `);
+
+    // Create payments table
+    await query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NOT NULL,
+        payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        payment_amount DECIMAL(10, 2) NOT NULL,
+        status VARCHAR(20) DEFAULT 'completed',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
+    // Create indexes
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_customers_account_number ON customers(account_number)
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_payments_customer_id ON payments(customer_id)
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_payments_payment_date ON payments(payment_date)
+    `);
+  }
 };
 
 const seedData = async () => {
-  const result = await query('SELECT COUNT(*) FROM customers');
-  const count = parseInt(result.rows[0].count, 10);
+  // Check if data already exists
+  const existingCustomers = await query('SELECT COUNT(*) as count FROM customers');
+  const count = existingCustomers.rows?.[0]?.count || existingCustomers.rows?.[0]?.['count'] || 0;
 
-  if (count > 0) {
-    console.log('Database already seeded. Skipping.');
+  if (parseInt(count) > 0) {
+    console.log('Database already seeded. Skipping seed data insertion.');
     return;
   }
 
+  // Sample customer data
   const customers = [
-    { acc: 'ACC001', date: '2024-01-15', rate: 12.5, tenure: 24, emi: 15000 },
-    { acc: 'ACC002', date: '2024-02-20', rate: 11.75, tenure: 36, emi: 12000 },
-    { acc: 'ACC003', date: '2024-03-10', rate: 13.25, tenure: 18, emi: 18000 },
-    { acc: 'ACC004', date: '2024-04-05', rate: 10.5, tenure: 48, emi: 10000 },
-    { acc: 'ACC005', date: '2024-05-12', rate: 12.0, tenure: 30, emi: 14000 }
+    {
+      account_number: 'ACC001',
+      issue_date: '2024-01-15',
+      interest_rate: 12.5,
+      tenure: 24,
+      emi_due: 15000.00
+    },
+    {
+      account_number: 'ACC002',
+      issue_date: '2024-02-20',
+      interest_rate: 11.75,
+      tenure: 36,
+      emi_due: 12000.00
+    },
+    {
+      account_number: 'ACC003',
+      issue_date: '2024-03-10',
+      interest_rate: 13.25,
+      tenure: 18,
+      emi_due: 18000.00
+    },
+    {
+      account_number: 'ACC004',
+      issue_date: '2024-04-05',
+      interest_rate: 10.5,
+      tenure: 48,
+      emi_due: 10000.00
+    },
+    {
+      account_number: 'ACC005',
+      issue_date: '2024-05-12',
+      interest_rate: 12.0,
+      tenure: 30,
+      emi_due: 14000.00
+    }
   ];
 
-  for (const c of customers) {
-    await query(
-      `
-      INSERT INTO customers 
-      (account_number, issue_date, interest_rate, tenure, emi_due, remaining_emi)
-      VALUES ($1, $2, $3, $4, $5, $5)
-      ON CONFLICT (account_number) DO NOTHING
-      `,
-      [c.acc, c.date, c.rate, c.tenure, c.emi]
-    );
+  const dbType = process.env.DB_TYPE || 'postgres';
+  
+  // Insert customers
+  for (const customer of customers) {
+    if (dbType === 'postgres') {
+      await query(
+        `INSERT INTO customers (account_number, issue_date, interest_rate, tenure, emi_due, remaining_emi) 
+         VALUES ($1, $2, $3, $4, $5, $5) 
+         ON CONFLICT (account_number) DO NOTHING`,
+        [customer.account_number, customer.issue_date, customer.interest_rate, customer.tenure, customer.emi_due]
+      );
+    } else {
+      await query(
+        `INSERT IGNORE INTO customers (account_number, issue_date, interest_rate, tenure, emi_due, remaining_emi) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [customer.account_number, customer.issue_date, customer.interest_rate, customer.tenure, customer.emi_due, customer.emi_due]
+      );
+    }
   }
 
-  const { rows } = await query(
-    'SELECT id FROM customers WHERE account_number = $1',
+  // Insert sample payments
+  const customer1 = await query(
+    dbType === 'postgres' 
+      ? 'SELECT id FROM customers WHERE account_number = $1' 
+      : 'SELECT id FROM customers WHERE account_number = ?',
     ['ACC001']
   );
+  const customer1Id = customer1.rows?.[0]?.id || customer1[0]?.[0]?.id;
 
-  if (rows.length > 0) {
-    const customerId = rows[0].id;
-
-    await query(
-      `
-      INSERT INTO payments (customer_id, payment_amount, payment_date, status)
-      VALUES ($1, $2, $3, $4)
-      `,
-      [customerId, 15000, '2024-06-01', 'completed']
-    );
-
-    await query(
-      `
-      INSERT INTO payments (customer_id, payment_amount, payment_date, status)
-      VALUES ($1, $2, $3, $4)
-      `,
-      [customerId, 15000, '2024-07-01', 'completed']
-    );
+  if (customer1Id) {
+    if (dbType === 'postgres') {
+      await query(
+        `INSERT INTO payments (customer_id, payment_amount, payment_date, status) 
+         VALUES ($1, $2, $3, $4)`,
+        [customer1Id, 15000.00, '2024-06-01', 'completed']
+      );
+      await query(
+        `INSERT INTO payments (customer_id, payment_amount, payment_date, status) 
+         VALUES ($1, $2, $3, $4)`,
+        [customer1Id, 15000.00, '2024-07-01', 'completed']
+      );
+    } else {
+      await query(
+        `INSERT INTO payments (customer_id, payment_amount, payment_date, status) 
+         VALUES (?, ?, ?, ?)`,
+        [customer1Id, 15000.00, '2024-06-01', 'completed']
+      );
+      await query(
+        `INSERT INTO payments (customer_id, payment_amount, payment_date, status) 
+         VALUES (?, ?, ?, ?)`,
+        [customer1Id, 15000.00, '2024-07-01', 'completed']
+      );
+    }
   }
 
   console.log('Sample data seeded successfully!');
@@ -122,15 +238,23 @@ const seedData = async () => {
 
 const runSeed = async () => {
   try {
+    console.log('Initializing database connection...');
     await initDatabase();
+    
+    console.log('Creating tables...');
     await createTables();
+    console.log('Tables created successfully!');
+    
+    console.log('Seeding data...');
     await seedData();
-    console.log('Database seeding completed!');
+    
+    console.log('Database seeding completed successfully!');
     process.exit(0);
-  } catch (err) {
-    console.error('Seeding failed:', err);
+  } catch (error) {
+    console.error('Error seeding database:', error);
     process.exit(1);
   }
 };
 
 runSeed();
+
